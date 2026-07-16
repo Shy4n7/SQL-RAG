@@ -67,29 +67,36 @@ def main():
             if not trainer_name:
                 continue
                 
-            matched_id = None
-            matched_name = None
-            
-            for tid, tname in trainers:
-                if tname.strip().lower() == trainer_name.lower():
-                    matched_id = tid
-                    matched_name = tname
-                    break
-            
-            if not matched_id:
-                t_names = [t[1] for t in trainers]
-                close_matches = difflib.get_close_matches(trainer_name, t_names, n=1, cutoff=0.5)
-                if close_matches:
-                    suggestion = close_matches[0]
-                    for tid, tname in trainers:
-                        if tname == suggestion:
-                            matched_id = tid
-                            matched_name = tname
-                            print(f"\033[93mFuzzy matched input to: {matched_name}\033[0m")
-                            break
-            
-            if matched_id:
-                trainer_id = matched_id
+            exact_matches = [t for t in trainers if t[1].strip().lower() == trainer_name.lower()]
+            if len(exact_matches) == 1:
+                trainer_id, matched_name = exact_matches[0]
+                print(f"\033[92mAuthenticated as Trainer: {matched_name} (ID: {trainer_id})\033[0m")
+                break
+
+            sub_matches = [t for t in trainers if trainer_name.lower() in t[1].lower()]
+            if len(sub_matches) > 1:
+                print(f"\033[91mError: Name '{trainer_name}' is ambiguous. Multiple trainers found:\033[0m")
+                for _, name in sub_matches:
+                    print(f"- {name}")
+                print("Please enter the full name.\n")
+                continue
+            elif len(sub_matches) == 1:
+                trainer_id, matched_name = sub_matches[0]
+                print(f"\033[92mAuthenticated as Trainer: {matched_name} (ID: {trainer_id})\033[0m")
+                break
+
+            t_names = [t[1] for t in trainers]
+            close_matches = difflib.get_close_matches(trainer_name, t_names, n=3, cutoff=0.5)
+            if len(close_matches) > 1:
+                print(f"\033[91mError: Name '{trainer_name}' not found. Did you mean one of these?\033[0m")
+                for name in close_matches:
+                    print(f"- {name}")
+                print()
+                continue
+            elif len(close_matches) == 1:
+                matched_name = close_matches[0]
+                trainer_id = [t[0] for t in trainers if t[1] == matched_name][0]
+                print(f"\033[93mFuzzy matched input to: {matched_name}\033[0m")
                 print(f"\033[92mAuthenticated as Trainer: {matched_name} (ID: {trainer_id})\033[0m")
                 break
             else:
