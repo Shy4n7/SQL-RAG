@@ -1,0 +1,5 @@
+llama-index
+llama-index-llms-gemini
+google-generativeai
+sqlalchemy
+python-dotenv
