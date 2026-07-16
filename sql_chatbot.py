@@ -75,10 +75,7 @@ def main():
 
             sub_matches = [t for t in trainers if trainer_name.lower() in t[1].lower()]
             if len(sub_matches) > 1:
-                print(f"\033[91mError: Name '{trainer_name}' is ambiguous. Multiple trainers found:\033[0m")
-                for _, name in sub_matches:
-                    print(f"- {name}")
-                print("Please enter the full name.\n")
+                print("\033[91mError: Multiple names found, please add initial or full name.\033[0m\n")
                 continue
             elif len(sub_matches) == 1:
                 trainer_id, matched_name = sub_matches[0]
@@ -88,10 +85,7 @@ def main():
             t_names = [t[1] for t in trainers]
             close_matches = difflib.get_close_matches(trainer_name, t_names, n=3, cutoff=0.5)
             if len(close_matches) > 1:
-                print(f"\033[91mError: Name '{trainer_name}' not found. Did you mean one of these?\033[0m")
-                for name in close_matches:
-                    print(f"- {name}")
-                print()
+                print("\033[91mError: Multiple names found, please add initial or full name.\033[0m\n")
                 continue
             elif len(close_matches) == 1:
                 matched_name = close_matches[0]
@@ -100,10 +94,7 @@ def main():
                 print(f"\033[92mAuthenticated as Trainer: {matched_name} (ID: {trainer_id})\033[0m")
                 break
             else:
-                print("\033[91mError: Trainer name not recognized. Registered trainers are:\033[0m")
-                for _, name in trainers:
-                    print(f"- {name}")
-                print()
+                print("\033[91mError: Trainer name not recognized. Please try again.\033[0m\n")
         else:
             print("Invalid choice. Please enter 1 or 2.")
 
