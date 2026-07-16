@@ -2,8 +2,9 @@ import os
 import sys
 import time
 import json
+import sqlite3
 from dotenv import load_dotenv
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from llama_index.core import SQLDatabase, Settings, PromptTemplate
 from llama_index.core.embeddings import MockEmbedding
 from llama_index.llms.gemini import Gemini
@@ -38,6 +39,38 @@ def main():
         print("Please set your Gemini API key in the .env file or environment.")
         sys.exit(1)
 
+    db_file = "profice.db"
+    if not os.path.exists(db_file):
+        print(f"\033[91mError: Database file '{db_file}' not found in the current directory.\033[0m")
+        sys.exit(1)
+
+    print("\n\033[96mSelect your access role:\033[0m")
+    print("1. Admin")
+    print("2. Trainer")
+    while True:
+        choice = input("Enter choice (1 or 2): ").strip()
+        if choice == "1":
+            role = "admin"
+            trainer_id = None
+            print("\033[92mAuthenticated as Admin.\033[0m")
+            break
+        elif choice == "2":
+            role = "trainer"
+            conn = sqlite3.connect(db_file)
+            cursor = conn.cursor()
+            trainer_name = input("Enter your Trainer Name (e.g. Akash K): ").strip()
+            cursor.execute("SELECT id FROM trainers WHERE name = ?", (trainer_name,))
+            row = cursor.fetchone()
+            conn.close()
+            if row:
+                trainer_id = row[0]
+                print(f"\033[92mAuthenticated as Trainer: {trainer_name} (ID: {trainer_id})\033[0m")
+                break
+            else:
+                print("\033[91mError: Trainer name not found in database. Please try again.\033[0m")
+        else:
+            print("Invalid choice. Please enter 1 or 2.")
+
     print("\033[96mInitializing SQL Chatbot...\033[0m")
     
     try:
@@ -47,15 +80,25 @@ def main():
     except Exception as e:
         print(f"\033[91mError initializing Gemini LLM: {e}\033[0m")
         sys.exit(1)
-
-    db_file = "profice.db"
-    if not os.path.exists(db_file):
-        print(f"\033[91mError: Database file '{db_file}' not found in the current directory.\033[0m")
-        sys.exit(1)
         
     try:
         engine = create_engine(f"sqlite:///file:{db_file}?mode=ro&uri=true")
-        sql_database = SQLDatabase(engine, include_tables=["trainers", "feedback"])
+        with engine.begin() as conn:
+            conn.execute(text("DROP VIEW IF EXISTS temp.v_trainers"))
+            conn.execute(text("DROP VIEW IF EXISTS temp.v_feedback"))
+            if role == "admin":
+                conn.execute(text("CREATE TEMP VIEW v_trainers AS SELECT id, name, department FROM trainers"))
+                conn.execute(text("CREATE TEMP VIEW v_feedback AS SELECT id, trainer_id, student_name, feedback_text, rating FROM feedback"))
+            else:
+                conn.execute(text("CREATE TEMP VIEW v_trainers AS SELECT id, name, department FROM trainers WHERE id = :tid"), {"tid": trainer_id})
+                conn.execute(text("CREATE TEMP VIEW v_feedback AS SELECT id, trainer_id, feedback_text, rating FROM feedback WHERE trainer_id = :tid"), {"tid": trainer_id})
+        
+        sql_database = SQLDatabase(
+            engine,
+            schema="temp",
+            include_tables=["v_trainers", "v_feedback"],
+            view_support=True
+        )
     except Exception as e:
         print(f"\033[91mError connecting to database: {e}\033[0m")
         sys.exit(1)
@@ -63,7 +106,7 @@ def main():
     try:
         query_engine = NLSQLTableQueryEngine(
             sql_database=sql_database,
-            tables=["trainers", "feedback"],
+            tables=["v_trainers", "v_feedback"],
             verbose=False
         )
         
@@ -102,7 +145,7 @@ def main():
     chat_history = []
 
     print("\033[92mChatbot initialized successfully!\033[0m")
-    print("Database: \033[93mprofice.db\033[0m (Tables: trainers, feedback)")
+    print(f"Database: \033[93mprofice.db\033[0m (Role: \033[95m{role}\033[0m, Views: v_trainers, v_feedback)")
     print("Model: \033[93mgemini-3.1-flash-lite\033[0m")
     print("Type \033[95m'exit'\033[0m or \033[95m'quit'\033[0m to end the conversation.\n")
 
