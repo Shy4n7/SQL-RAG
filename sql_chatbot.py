@@ -60,6 +60,7 @@ def main():
         if choice == "1":
             role = "admin"
             trainer_id = None
+            matched_name = None
             print("\033[92mAuthenticated as Admin.\033[0m")
             break
         elif choice == "2":
@@ -243,7 +244,11 @@ def main():
                 continue
             
             print("\033[90mProcessing question...\033[0m")
-            response = query_engine.query(processed_question)
+            user_context = f"[Logged-in User context: Role={role}"
+            if role == "trainer":
+                user_context += f", Name={matched_name}"
+            user_context += "] "
+            response = query_engine.query(user_context + processed_question)
             
             sql_query = response.metadata.get("sql_query")
             
