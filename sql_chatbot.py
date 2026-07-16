@@ -2,7 +2,7 @@ import os
 import sys
 from dotenv import load_dotenv
 from sqlalchemy import create_engine
-from llama_index.core import SQLDatabase, Settings
+from llama_index.core import SQLDatabase, Settings, PromptTemplate
 from llama_index.core.embeddings import MockEmbedding
 from llama_index.llms.gemini import Gemini
 from llama_index.core.query_engine import NLSQLTableQueryEngine
@@ -44,6 +44,33 @@ def main():
             tables=["trainers", "feedback"],
             verbose=False
         )
+        
+        custom_text_to_sql_tmpl = (
+            "Given an input question, first create a syntactically correct {dialect} query to run, "
+            "then look at the results of the query and return the answer. You can order the results "
+            "by a relevant column to return the most interesting examples in the database.\n\n"
+            "Never query for all the columns from a specific table, only ask for a few relevant columns "
+            "given the question.\n\n"
+            "Pay attention to use only the column names that you can see in the schema description. "
+            "Be careful to not query for columns that do not exist. Pay attention to which column is "
+            "in which table. Also, qualify column names with the table name when needed.\n\n"
+            "Guidelines:\n"
+            "- When filtering by text columns (like names or words), if the search term in the question "
+            "is incomplete or could be a partial match, always use the LIKE operator with wildcards "
+            "(e.g., column_name LIKE '%search_term%') instead of direct equality (=).\n\n"
+            "You are required to use the following format, each taking one line:\n\n"
+            "Question: Question here\n"
+            "SQLQuery: SQL Query to run\n"
+            "SQLResult: Result of the SQLQuery\n"
+            "Answer: Final answer here\n\n"
+            "Only use tables listed below.\n"
+            "{schema}\n\n"
+            "Question: {query_str}\n"
+            "SQLQuery: "
+        )
+        custom_prompt = PromptTemplate(custom_text_to_sql_tmpl)
+        query_engine.update_prompts({"sql_retriever:text_to_sql_prompt": custom_prompt})
+        
     except Exception as e:
         print(f"\033[91mError initializing Query Engine: {e}\033[0m")
         sys.exit(1)
