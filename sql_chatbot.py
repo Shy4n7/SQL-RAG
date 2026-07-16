@@ -1,6 +1,7 @@
 import os
 import sys
 import time
+import json
 from dotenv import load_dotenv
 from sqlalchemy import create_engine
 from llama_index.core import SQLDatabase, Settings, PromptTemplate
@@ -21,6 +22,14 @@ def safe_llm_complete(prompt, retries=3, delay=5):
                     time.sleep(delay)
                     continue
             raise e
+
+def parse_json_response(text):
+    text = text.strip()
+    if text.startswith("```json"):
+        text = text[7:]
+    if text.endswith("```"):
+        text = text[:-3]
+    return json.loads(text.strip())
 
 def main():
     api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
@@ -106,42 +115,35 @@ def main():
                 print("\033[96mGoodbye!\033[0m")
                 break
             
-            processed_question = question
-            if chat_history:
-                history_str = ""
-                for prev_q, prev_a in chat_history[-3:]:
-                    history_str += f"User: {prev_q}\nAssistant: {prev_a}\n"
-                
-                rewrite_prompt = (
-                    f"Given the following conversation history, rewrite the user's latest question to be a "
-                    f"standalone, self-contained question. Remove all pronouns (he, she, they, his, its) and "
-                    f"replace them with the actual names/nouns from the context.\n"
-                    f"Crucial Rules:\n"
-                    f"- If the user asks for 'another', 'other', 'else', or 'different' entity (e.g. 'another Akash' or 'anyone else'), "
-                    f"rewrite the question to exclude the entities already discussed in the history (e.g. 'other than Akash L').\n"
-                    f"- When looking for a different or another entity, DO NOT carry over specific filter attributes like the department, "
-                    f"rating, or role of the previously discussed entity unless the user's latest question explicitly mentions them.\n\n"
-                    f"Conversation History:\n{history_str}\n"
-                    f"Latest Question: {question}\n"
-                    f"Standalone Question:"
-                )
-                rewrite_res = safe_llm_complete(rewrite_prompt)
-                processed_question = rewrite_res.text.strip()
-
+            history_str = ""
+            for prev_q, prev_a in chat_history[-3:]:
+                history_str += f"User: {prev_q}\nAssistant: {prev_a}\n"
+            
             classification_prompt = (
-                f"You are a routing assistant. Classify the user's question into one of two labels:\n"
-                f"- 'DB_QUERY': The question asks for data, summaries, reports, or ratings about trainers, feedback, or departments.\n"
-                f"- 'CHITCHAT': General greetings, hello, goodbye, off-topic chat, or questions unrelated to the database.\n\n"
-                f"Only output the label ('DB_QUERY' or 'CHITCHAT') and nothing else.\n\n"
-                f"User Question: {processed_question}\n"
-                f"Label:"
+                f"You are an assistant that classifies and rewrites user inputs based on conversation history.\n\n"
+                f"Your task is to:\n"
+                f"1. Classify the latest question as either 'DB_QUERY' (asks for data/ratings/trainers from a database) or 'CHITCHAT' (greetings, general chat, or off-topic).\n"
+                f"2. If it is a 'DB_QUERY', rewrite it to be a standalone, self-contained question resolving any pronouns (he, she, they, his, its) from context.\n"
+                f"   - Rule: If the user asks for 'another', 'other', 'else', or 'different' entity (e.g. 'another Akash' or 'anyone else'), "
+                f"rewrite the question to exclude the entities already discussed in the history (e.g. 'other than Akash L').\n"
+                f"   - Rule: DO NOT carry over unrelated attributes (like department or rating of previous entities) unless explicitly requested.\n\n"
+                f"Format your output exactly as a JSON object with two keys:\n"
+                f"{{\n"
+                f"  \"label\": \"DB_QUERY\" or \"CHITCHAT\",\n"
+                f"  \"rewritten_question\": \"standalone question here (or empty string for CHITCHAT)\"\n"
+                f"}}\n\n"
+                f"Conversation History:\n{history_str}\n"
+                f"Latest Question: {question}\n"
+                f"JSON Output:"
             )
             
-            route_res = Settings.llm.complete(classification_prompt)
-            label = route_res.text.strip().upper()
+            route_res = safe_llm_complete(classification_prompt)
+            parsed_data = parse_json_response(route_res.text)
+            label = parsed_data.get("label", "DB_QUERY").upper()
+            processed_question = parsed_data.get("rewritten_question", question)
             
             if "CHITCHAT" in label:
-                chat_res = Settings.llm.complete(
+                chat_res = safe_llm_complete(
                     f"You are a helpful SQL database assistant. Respond to the user's message conversationally. "
                     f"Remind them that you can help them query trainer and feedback data in the database.\n\n"
                     f"User: {processed_question}\n"
