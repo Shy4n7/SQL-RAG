@@ -5,13 +5,20 @@ import json
 import sqlite3
 import difflib
 from dotenv import load_dotenv
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, text, event
 from llama_index.core import SQLDatabase, Settings, PromptTemplate
 from llama_index.core.embeddings import MockEmbedding
 from llama_index.llms.gemini import Gemini
 from llama_index.core.query_engine import NLSQLTableQueryEngine
 
 load_dotenv()
+
+def sqlite_authorizer(action, arg1, arg2, dbname, source):
+    if action == sqlite3.SQLITE_READ:
+        table_name = arg1
+        if table_name in ["trainers", "feedback"] and (not source or source.strip() == ""):
+            return sqlite3.SQLITE_DENY
+    return sqlite3.SQLITE_OK
 
 def safe_llm_complete(prompt, retries=3, delay=5):
     for i in range(retries):
@@ -110,6 +117,10 @@ def main():
         
     try:
         engine = create_engine(f"sqlite:///file:{db_file}?mode=ro&uri=true")
+        @event.listens_for(engine, "connect")
+        def set_sqlite_authorizer(dbapi_connection, connection_record):
+            dbapi_connection.set_authorizer(sqlite_authorizer)
+
         with engine.begin() as conn:
             conn.execute(text("DROP VIEW IF EXISTS temp.v_trainers"))
             conn.execute(text("DROP VIEW IF EXISTS temp.v_feedback"))
