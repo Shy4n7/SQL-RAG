@@ -91,6 +91,30 @@ def main():
                 print("\033[96mGoodbye!\033[0m")
                 break
             
+            classification_prompt = (
+                f"You are a routing assistant. Classify the user's question into one of two labels:\n"
+                f"- 'DB_QUERY': The question asks for data, summaries, reports, or ratings about trainers, feedback, or departments.\n"
+                f"- 'CHITCHAT': General greetings, hello, goodbye, off-topic chat, or questions unrelated to the database.\n\n"
+                f"Only output the label ('DB_QUERY' or 'CHITCHAT') and nothing else.\n\n"
+                f"User Question: {question}\n"
+                f"Label:"
+            )
+            
+            route_res = Settings.llm.complete(classification_prompt)
+            label = route_res.text.strip().upper()
+            
+            if "CHITCHAT" in label:
+                chat_res = Settings.llm.complete(
+                    f"You are a helpful SQL database assistant. Respond to the user's message conversationally. "
+                    f"Remind them that you can help them query trainer and feedback data in the database.\n\n"
+                    f"User: {question}\n"
+                    f"Assistant:"
+                )
+                print("\n" + "="*50)
+                print(f"\033[92mAnswer:\033[0m\n{chat_res.text}")
+                print("="*50 + "\n")
+                continue
+            
             print("\033[90mProcessing question...\033[0m")
             response = query_engine.query(question)
             
