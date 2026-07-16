@@ -45,7 +45,7 @@ def main():
         sys.exit(1)
         
     try:
-        engine = create_engine(f"sqlite:///{db_file}")
+        engine = create_engine(f"sqlite:///file:{db_file}?mode=ro&uri=true")
         sql_database = SQLDatabase(engine, include_tables=["trainers", "feedback"])
     except Exception as e:
         print(f"\033[91mError connecting to database: {e}\033[0m")
@@ -137,11 +137,11 @@ def main():
                 f"Label:"
             )
             
-            route_res = safe_llm_complete(classification_prompt)
+            route_res = Settings.llm.complete(classification_prompt)
             label = route_res.text.strip().upper()
             
             if "CHITCHAT" in label:
-                chat_res = safe_llm_complete(
+                chat_res = Settings.llm.complete(
                     f"You are a helpful SQL database assistant. Respond to the user's message conversationally. "
                     f"Remind them that you can help them query trainer and feedback data in the database.\n\n"
                     f"User: {processed_question}\n"
