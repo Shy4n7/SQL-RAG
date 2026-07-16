@@ -5,18 +5,13 @@ An intelligent SQLite database chatbot built with **LlamaIndex** and **Google Ge
 ## Architecture
 
 ```mermaid
-flowchart TD
-    User([User in Terminal]) -->|1. NL Query| CLI[sql_chatbot.py]
-    CLI -->|2. Query| Engine[NLSQLTableQueryEngine]
-    Engine -->|3. Table Schema & Prompt| Gemini[Gemini 3.1 Flash-Lite]
-    Gemini -->|4. SQL Query| Engine
-    Engine -->|5. Execute SQL| DB[(profice.db SQLite)]
-    DB -->|6. SQL Results| Engine
-    Engine -->|7. SQL Results & Query Context| Gemini
-    Gemini -->|8. Conversational Answer| Engine
-    Engine -->|9. Output Answer & SQL| CLI
-    CLI -->|10. Formatted Console Output| User
+flowchart LR
+    User([User]) <--> CLI[sql_chatbot.py]
+    CLI <--> Engine[LlamaIndex Engine]
+    Engine <--> Gemini([Gemini LLM])
+    Engine <--> DB[(SQLite Database)]
 ```
+
 
 ## Database Schema
 
