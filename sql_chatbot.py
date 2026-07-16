@@ -77,6 +77,8 @@ def main():
         print(f"\033[91mError initializing Query Engine: {e}\033[0m")
         sys.exit(1)
 
+    chat_history = []
+
     print("\033[92mChatbot initialized successfully!\033[0m")
     print("Database: \033[93mprofice.db\033[0m (Tables: trainers, feedback)")
     print("Model: \033[93mgemini-3.1-flash-lite\033[0m")
@@ -91,12 +93,29 @@ def main():
                 print("\033[96mGoodbye!\033[0m")
                 break
             
+            processed_question = question
+            if chat_history:
+                history_str = ""
+                for prev_q, prev_a in chat_history[-3:]:
+                    history_str += f"User: {prev_q}\nAssistant: {prev_a}\n"
+                
+                rewrite_prompt = (
+                    f"Given the following conversation history, rewrite the user's latest question to be a "
+                    f"standalone, self-contained question. Remove all pronouns (he, she, they, his, its) and "
+                    f"replace them with the actual names/nouns from the context.\n\n"
+                    f"Conversation History:\n{history_str}\n"
+                    f"Latest Question: {question}\n"
+                    f"Standalone Question:"
+                )
+                rewrite_res = Settings.llm.complete(rewrite_prompt)
+                processed_question = rewrite_res.text.strip()
+
             classification_prompt = (
                 f"You are a routing assistant. Classify the user's question into one of two labels:\n"
                 f"- 'DB_QUERY': The question asks for data, summaries, reports, or ratings about trainers, feedback, or departments.\n"
                 f"- 'CHITCHAT': General greetings, hello, goodbye, off-topic chat, or questions unrelated to the database.\n\n"
                 f"Only output the label ('DB_QUERY' or 'CHITCHAT') and nothing else.\n\n"
-                f"User Question: {question}\n"
+                f"User Question: {processed_question}\n"
                 f"Label:"
             )
             
@@ -107,16 +126,18 @@ def main():
                 chat_res = Settings.llm.complete(
                     f"You are a helpful SQL database assistant. Respond to the user's message conversationally. "
                     f"Remind them that you can help them query trainer and feedback data in the database.\n\n"
-                    f"User: {question}\n"
+                    f"User: {processed_question}\n"
                     f"Assistant:"
                 )
+                response_text = chat_res.text
                 print("\n" + "="*50)
-                print(f"\033[92mAnswer:\033[0m\n{chat_res.text}")
+                print(f"\033[92mAnswer:\033[0m\n{response_text}")
                 print("="*50 + "\n")
+                chat_history.append((question, response_text))
                 continue
             
             print("\033[90mProcessing question...\033[0m")
-            response = query_engine.query(question)
+            response = query_engine.query(processed_question)
             
             sql_query = response.metadata.get("sql_query")
             
@@ -130,6 +151,7 @@ def main():
                 
             print(f"\033[92mAnswer:\033[0m\n{response.response}")
             print("="*50 + "\n")
+            chat_history.append((question, response.response))
             
         except KeyboardInterrupt:
             print("\n\033[96mGoodbye!\033[0m")
