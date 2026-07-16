@@ -1,15 +1,26 @@
 # SQL RAG Chatbot
 
-An intelligent, secure, and highly optimized SQLite database chatbot built with **LlamaIndex** and **Google Gemini** (`gemini-3.1-flash-lite`). It allows users to ask natural language questions in the terminal, resolves conversational contexts, routes chitchat away, translates database queries into SQL, and returns responses.
+An intelligent, secure, and highly optimized SQLite database chatbot built with **LlamaIndex** and **Google Gemini** (`gemini-3.1-flash-lite`). It allows users to ask natural language questions in the terminal, resolves conversational contexts, routes chitchat away, enforces role-based access scopes, translates database queries into SQL, and returns responses.
 
 ## Architecture
 
-Our optimized single-pass pipeline processes user inputs as follows:
+Our secure, single-pass pipeline processes user inputs as follows:
 
 ```mermaid
 flowchart TD
-    User([User]) --> Input[User Input]
-    Input --> RouterRewriter[JSON Combined Router & Rewriter]
+    User([User CLI]) --> Authentication[Select Role: Admin or Trainer]
+    
+    subgraph SQLite Session Isolation
+        Authentication -->|Admin Selected| AdminViews[CREATE TEMP VIEW v_trainers AS SELECT * FROM trainers<br>CREATE TEMP VIEW v_feedback AS SELECT * FROM feedback]
+        Authentication -->|Trainer Selected| TrainerViews[CREATE TEMP VIEW v_trainers AS SELECT * FROM trainers WHERE id = trainer_id<br>CREATE TEMP VIEW v_feedback AS SELECT id, trainer_id, feedback_text, rating FROM feedback WHERE trainer_id = trainer_id]
+        
+        DB[(profice.db Tables: trainers, feedback)] -.->|Provides Data| AdminViews
+        DB -.->|Provides Data| TrainerViews
+    end
+    
+    AdminViews --> RouterRewriter[JSON Combined Router & Rewriter]
+    TrainerViews --> RouterRewriter
+    
     RouterRewriter --> GeminiRoute{Is DB Query?}
     
     GeminiRoute -- No: CHITCHAT --> ChatRes[Gemini Chat Response]
@@ -17,11 +28,11 @@ flowchart TD
     
     SQLPrep --> SQLGen[LlamaIndex Text-to-SQL Translator]
     SQLGen --> SQLRead[SQLite Read-Only Engine]
-    SQLRead --> DB[(profice.db)]
-    DB --> SQLRead
-    SQLRead --> NLRes[Response Synthesizer]
     
-    ChatRes & NLRes --> CLIOut[CLI Output & Memory Buffer Update]
+    SQLRead --> LlamaIndex[LlamaIndex SQL Query Engine]
+    LlamaIndex <--> Gemini([Gemini LLM])
+    
+    ChatRes & LlamaIndex --> CLIOut[CLI Output & Memory Buffer Update]
     CLIOut --> User
 ```
 
@@ -29,16 +40,20 @@ flowchart TD
 
 ## Key Features
 
-1. **Combined Router & Rewriter (Single-Pass Call)**:
+1. **Role-Based Access Control (RBAC)**:
+   - Enforces user access limits directly at CLI startup.
+   - **Admin**: Full database access. Can query all fields, including student evaluation feedback names.
+   - **Trainer**: Restricted self-access. Dynamic temp views filter records by the trainer's authenticated ID, and completely exclude the `student_name` column from the feedback schema. This prevents trainers from accessing other trainers' data or viewing student names under any circumstances.
+2. **Combined Router & Rewriter (Single-Pass Call)**:
    - Merges intent classification (`DB_QUERY` vs `CHITCHAT`) and conversational memory query-rewriting into a **single Gemini API request** that outputs structured JSON. This cuts down sequential network delay, speeds up responses, and saves 25% of your API quota.
-2. **Context-Isolated Conversational Memory**:
+3. **Context-Isolated Conversational Memory**:
    - Maintains a rolling 3-turn memory window in RAM.
    - Intelligently rewrites questions containing pronouns (like *"his rating?"* $\rightarrow$ *"What is Akash K's rating?"*) and isolates contexts (e.g. preventing attribute leakage when asking for *"another"* entity).
-3. **Fuzzy Match & Typo Tolerance**:
+4. **Fuzzy Match & Typo Tolerance**:
    - Updates text-to-sql generation prompts to automatically replace exact equality checks (`=`) with `LIKE` wildcards for partial match queries and auto-correct misspelled database entities (e.g. `aksh` $\rightarrow$ `Akash`).
-4. **Read-Only Database Enforcement (Safety)**:
+5. **Read-Only Database Enforcement (Safety)**:
    - Connects to SQLite in read-only mode (`mode=ro&uri=true`) to block mutating operations (such as `DROP`, `DELETE`, or `INSERT`) at the database driver level.
-5. **Rate-Limit Resilience (Auto-Retries)**:
+6. **Rate-Limit Resilience (Auto-Retries)**:
    - Implements a network retry wrapper that intercepts `429 ResourceExhausted` rate limit exceptions on free-tier keys, sleeping briefly and retrying automatically instead of crashing.
 
 ---
@@ -91,41 +106,6 @@ Start the interactive terminal CLI session:
 ```bash
 python sql_chatbot.py
 ```
+Upon startup, the CLI will prompt you to select your access role (**Admin** or **Trainer**) before launching the chat loop.
+
 Type `exit` or `quit` to stop the loop.
-
----
-
-## Conversation Examples
-
-### Multi-Turn Context & Pronoun Resolution
-```
-Ask a question about the database:
-> who is akash l?
-==================================================
-Generated SQL Query:
-SELECT name, department FROM trainers WHERE name LIKE '%Akash L%'
---------------------------------------------------
-Answer:
-Akash L is a trainer in the Java department.
-==================================================
-
-Ask a question about the database:
-> what is his rating?
-==================================================
-Generated SQL Query:
-SELECT T1.rating FROM feedback AS T1 JOIN trainers AS T2 ON T1.trainer_id = T2.id WHERE T2.name LIKE '%Akash L%'
---------------------------------------------------
-Answer:
-The rating for Akash L is 2.
-==================================================
-
-Ask a question about the database:
-> who is another akash?
-==================================================
-Generated SQL Query:
-SELECT name FROM trainers WHERE name LIKE '%Akash%' AND name != 'Akash L'
---------------------------------------------------
-Answer:
-A trainer named Akash other than Akash L is Akash K.
-==================================================
-```
