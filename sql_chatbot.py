@@ -3,6 +3,7 @@ import sys
 import time
 import json
 import sqlite3
+import difflib
 from dotenv import load_dotenv
 from sqlalchemy import create_engine, text
 from llama_index.core import SQLDatabase, Settings, PromptTemplate
@@ -58,16 +59,44 @@ def main():
             role = "trainer"
             conn = sqlite3.connect(db_file)
             cursor = conn.cursor()
-            trainer_name = input("Enter your Trainer Name (e.g. Akash K): ").strip()
-            cursor.execute("SELECT id FROM trainers WHERE name = ?", (trainer_name,))
-            row = cursor.fetchone()
+            cursor.execute("SELECT id, name FROM trainers")
+            trainers = cursor.fetchall()
             conn.close()
-            if row:
-                trainer_id = row[0]
-                print(f"\033[92mAuthenticated as Trainer: {trainer_name} (ID: {trainer_id})\033[0m")
+            
+            trainer_name = input("Enter your Trainer Name (e.g. Akash K): ").strip()
+            if not trainer_name:
+                continue
+                
+            matched_id = None
+            matched_name = None
+            
+            for tid, tname in trainers:
+                if tname.strip().lower() == trainer_name.lower():
+                    matched_id = tid
+                    matched_name = tname
+                    break
+            
+            if not matched_id:
+                t_names = [t[1] for t in trainers]
+                close_matches = difflib.get_close_matches(trainer_name, t_names, n=1, cutoff=0.5)
+                if close_matches:
+                    suggestion = close_matches[0]
+                    for tid, tname in trainers:
+                        if tname == suggestion:
+                            matched_id = tid
+                            matched_name = tname
+                            print(f"\033[93mFuzzy matched input to: {matched_name}\033[0m")
+                            break
+            
+            if matched_id:
+                trainer_id = matched_id
+                print(f"\033[92mAuthenticated as Trainer: {matched_name} (ID: {trainer_id})\033[0m")
                 break
             else:
-                print("\033[91mError: Trainer name not found in database. Please try again.\033[0m")
+                print("\033[91mError: Trainer name not recognized. Registered trainers are:\033[0m")
+                for _, name in trainers:
+                    print(f"- {name}")
+                print()
         else:
             print("Invalid choice. Please enter 1 or 2.")
 
@@ -90,8 +119,8 @@ def main():
                 conn.execute(text("CREATE TEMP VIEW v_trainers AS SELECT id, name, department FROM trainers"))
                 conn.execute(text("CREATE TEMP VIEW v_feedback AS SELECT id, trainer_id, student_name, feedback_text, rating FROM feedback"))
             else:
-                conn.execute(text("CREATE TEMP VIEW v_trainers AS SELECT id, name, department FROM trainers WHERE id = :tid"), {"tid": trainer_id})
-                conn.execute(text("CREATE TEMP VIEW v_feedback AS SELECT id, trainer_id, feedback_text, rating FROM feedback WHERE trainer_id = :tid"), {"tid": trainer_id})
+                conn.execute(text(f"CREATE TEMP VIEW v_trainers AS SELECT id, name, department FROM trainers WHERE id = {trainer_id}"))
+                conn.execute(text(f"CREATE TEMP VIEW v_feedback AS SELECT id, trainer_id, feedback_text, rating FROM feedback WHERE trainer_id = {trainer_id}"))
         
         sql_database = SQLDatabase(
             engine,
