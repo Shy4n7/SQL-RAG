@@ -1,5 +1,6 @@
 import os
 import sys
+import time
 from dotenv import load_dotenv
 from sqlalchemy import create_engine
 from llama_index.core import SQLDatabase, Settings, PromptTemplate
@@ -8,6 +9,18 @@ from llama_index.llms.gemini import Gemini
 from llama_index.core.query_engine import NLSQLTableQueryEngine
 
 load_dotenv()
+
+def safe_llm_complete(prompt, retries=3, delay=5):
+    for i in range(retries):
+        try:
+            return Settings.llm.complete(prompt)
+        except Exception as e:
+            if "ResourceExhausted" in str(e) or "429" in str(e):
+                if i < retries - 1:
+                    print(f"\033[93mRate limit reached. Retrying in {delay} seconds...\033[0m")
+                    time.sleep(delay)
+                    continue
+            raise e
 
 def main():
     api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
@@ -102,12 +115,17 @@ def main():
                 rewrite_prompt = (
                     f"Given the following conversation history, rewrite the user's latest question to be a "
                     f"standalone, self-contained question. Remove all pronouns (he, she, they, his, its) and "
-                    f"replace them with the actual names/nouns from the context.\n\n"
+                    f"replace them with the actual names/nouns from the context.\n"
+                    f"Crucial Rules:\n"
+                    f"- If the user asks for 'another', 'other', 'else', or 'different' entity (e.g. 'another Akash' or 'anyone else'), "
+                    f"rewrite the question to exclude the entities already discussed in the history (e.g. 'other than Akash L').\n"
+                    f"- When looking for a different or another entity, DO NOT carry over specific filter attributes like the department, "
+                    f"rating, or role of the previously discussed entity unless the user's latest question explicitly mentions them.\n\n"
                     f"Conversation History:\n{history_str}\n"
                     f"Latest Question: {question}\n"
                     f"Standalone Question:"
                 )
-                rewrite_res = Settings.llm.complete(rewrite_prompt)
+                rewrite_res = safe_llm_complete(rewrite_prompt)
                 processed_question = rewrite_res.text.strip()
 
             classification_prompt = (
@@ -119,11 +137,11 @@ def main():
                 f"Label:"
             )
             
-            route_res = Settings.llm.complete(classification_prompt)
+            route_res = safe_llm_complete(classification_prompt)
             label = route_res.text.strip().upper()
             
             if "CHITCHAT" in label:
-                chat_res = Settings.llm.complete(
+                chat_res = safe_llm_complete(
                     f"You are a helpful SQL database assistant. Respond to the user's message conversationally. "
                     f"Remind them that you can help them query trainer and feedback data in the database.\n\n"
                     f"User: {processed_question}\n"
