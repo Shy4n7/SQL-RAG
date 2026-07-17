@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 from sqlalchemy import create_engine, text, event
 from llama_index.core import SQLDatabase, Settings, PromptTemplate
 from llama_index.core.embeddings import MockEmbedding
-from llama_index.llms.gemini import Gemini
+from llama_index.llms.google_genai import GoogleGenAI
 from llama_index.core.query_engine import NLSQLTableQueryEngine
 
 load_dotenv()
@@ -109,7 +109,7 @@ def main():
     print("\033[96mInitializing SQL Chatbot...\033[0m")
     
     try:
-        llm = Gemini(model="models/gemini-3.1-flash-lite", api_key=api_key)
+        llm = GoogleGenAI(model="models/gemini-3.1-flash-lite", api_key=api_key)
         Settings.llm = llm
         Settings.embed_model = MockEmbedding(embed_dim=768)
     except Exception as e:
@@ -126,11 +126,11 @@ def main():
             conn.execute(text("DROP VIEW IF EXISTS temp.v_trainers"))
             conn.execute(text("DROP VIEW IF EXISTS temp.v_feedback"))
             if role == "admin":
-                conn.execute(text("CREATE TEMP VIEW v_trainers AS SELECT id, name, department FROM trainers"))
-                conn.execute(text("CREATE TEMP VIEW v_feedback AS SELECT id, trainer_id, student_name, feedback_text, rating FROM feedback"))
+                conn.execute(text("CREATE TEMP VIEW v_trainers AS SELECT id, name, department, attendance FROM trainers"))
+                conn.execute(text("CREATE TEMP VIEW v_feedback AS SELECT id, trainer_id, student_name, feedback_text, rating, created_at FROM feedback"))
             else:
-                conn.execute(text(f"CREATE TEMP VIEW v_trainers AS SELECT id, name, department FROM trainers WHERE id = {trainer_id}"))
-                conn.execute(text(f"CREATE TEMP VIEW v_feedback AS SELECT id, trainer_id, feedback_text, rating FROM feedback WHERE trainer_id = {trainer_id}"))
+                conn.execute(text(f"CREATE TEMP VIEW v_trainers AS SELECT id, name, department, attendance FROM trainers WHERE id = {trainer_id}"))
+                conn.execute(text(f"CREATE TEMP VIEW v_feedback AS SELECT id, trainer_id, feedback_text, rating, created_at FROM feedback WHERE trainer_id = {trainer_id}"))
         
         sql_database = SQLDatabase(
             engine,
@@ -142,49 +142,114 @@ def main():
         print(f"\033[91mError connecting to database: {e}\033[0m")
         sys.exit(1)
 
-    try:
-        query_engine = NLSQLTableQueryEngine(
-            sql_database=sql_database,
-            tables=["v_trainers", "v_feedback"],
-            verbose=False
-        )
-        
-        custom_text_to_sql_tmpl = (
-            "Given an input question, first create a syntactically correct {dialect} query to run, "
-            "then look at the results of the query and return the answer. You can order the results "
-            "by a relevant column to return the most interesting examples in the database.\n\n"
-            "Never query for all the columns from a specific table, only ask for a few relevant columns "
-            "given the question.\n\n"
-            "Pay attention to use only the column names that you can see in the schema description. "
-            "Be careful to not query for columns that do not exist. Pay attention to which column is "
-            "in which table. Also, qualify column names with the table name when needed.\n\n"
-            "Guidelines:\n"
-            "- When filtering by text columns (like names or words), if the search term in the question "
-            "is incomplete or could be a partial match, always use the LIKE operator with wildcards "
-            "(e.g., column_name LIKE '%search_term%') instead of direct equality (=).\n"
-            "- Correct any obvious spelling errors or typos in search terms (e.g., 'aksh' to 'Akash') "
-            "to match the context of the database tables before writing the SQL query.\n"
-            "- If the question asks for information or metrics that are not stored in any of the tables "
-            "(such as salary, age, location, or schedule), do not guess or write a filter on unrelated columns like name. "
-            "Instead, write a query that returns a constant string explaining the limitation "
-            "(e.g., SELECT 'unsupported_query_salary_not_in_database') so the final answer can explain "
-            "the database doesn't store this info.\n\n"
-            "You are required to use the following format, each taking one line:\n\n"
-            "Question: Question here\n"
-            "SQLQuery: SQL Query to run\n"
-            "SQLResult: Result of the SQLQuery\n"
-            "Answer: Final answer here\n\n"
-            "Only use tables listed below.\n"
-            "{schema}\n\n"
-            "Question: {query_str}\n"
-            "SQLQuery: "
-        )
-        custom_prompt = PromptTemplate(custom_text_to_sql_tmpl)
-        query_engine.update_prompts({"sql_retriever:text_to_sql_prompt": custom_prompt})
-        
-    except Exception as e:
-        print(f"\033[91mError initializing Query Engine: {e}\033[0m")
-        sys.exit(1)
+    import datetime
+    
+    if role == "admin":
+        try:
+            query_engine = NLSQLTableQueryEngine(
+                sql_database=sql_database,
+                tables=["v_trainers", "v_feedback"],
+                verbose=False
+            )
+            
+            custom_text_to_sql_tmpl = (
+                "Given an input question, first create a syntactically correct {dialect} query to run, "
+                "then look at the results of the query and return the answer. You can order the results "
+                "by a relevant column to return the most interesting examples in the database.\n\n"
+                "Never query for all the columns from a specific table, only ask for a few relevant columns "
+                "given the question.\n\n"
+                "Pay attention to use only the column names that you can see in the schema description. "
+                "Be careful to not query for columns that do not exist. Pay attention to which column is "
+                "in which table. Also, qualify column names with the table name when needed.\n\n"
+                "Guidelines:\n"
+                "- When filtering by text columns (like names or words), if the search term in the question "
+                "is incomplete or could be a partial match, always use the LIKE operator with wildcards "
+                "(e.g., column_name LIKE '%search_term%') instead of direct equality (=).\n"
+                "- Correct any obvious spelling errors or typos in search terms (e.g., 'aksh' to 'Akash') "
+                "to match the context of the database tables before writing the SQL query.\n"
+                "- If the question asks for information or metrics that are not stored in any of the tables "
+                "(such as salary, age, location, or schedule), do not guess or write a filter on unrelated columns like name. "
+                "Instead, write a query that returns a constant string explaining the limitation "
+                "(e.g., SELECT 'unsupported_query_salary_not_in_database') so the final answer can explain "
+                "the database doesn't store this info.\n\n"
+                "You are required to use the following format, each taking one line:\n\n"
+                "Question: Question here\n"
+                "SQLQuery: SQL Query to run\n"
+                "SQLResult: Result of the SQLQuery\n"
+                "Answer: Final answer here\n\n"
+                "Only use tables listed below.\n"
+                "{schema}\n\n"
+                "Question: {query_str}\n"
+                "SQLQuery: "
+            )
+            custom_prompt = PromptTemplate(custom_text_to_sql_tmpl)
+            query_engine.update_prompts({"sql_retriever:text_to_sql_prompt": custom_prompt})
+            
+            # Load Admin 3-month context data
+            cutoff_date = (datetime.date.today() - datetime.timedelta(days=90)).strftime('%Y-%m-%d')
+            with engine.connect() as conn:
+                trainers_all = conn.execute(text("SELECT id, name, department, attendance FROM v_trainers")).fetchall()
+                feedback_recent = conn.execute(text(f"SELECT id, trainer_id, student_name, feedback_text, rating, created_at FROM v_feedback WHERE created_at >= '{cutoff_date}'")).fetchall()
+            
+            trainers_table = "\n".join([f"| {t[0]} | {t[1]} | {t[2]} | {t[3]}% |" for t in trainers_all])
+            feedback_table = "\n".join([f"| {f[5]} | {f[0]} | {f[1]} | {f[2]} | {f[3]} | {f[4]} |" for f in feedback_recent])
+            
+            admin_context = (
+                f"You are the SQL Database Assistant for the Admin.\n"
+                f"You have access to the database data for the LAST 3 MONTHS (since {cutoff_date}).\n\n"
+                f"Current Date: {datetime.date.today().strftime('%Y-%m-%d')}\n\n"
+                f"Trainers Profile (v_trainers):\n"
+                f"| ID | Name | Department | Attendance |\n"
+                f"|---|---|---|---|\n"
+                f"{trainers_table}\n\n"
+                f"Recent Feedback Received (v_feedback - Last 3 Months):\n"
+                f"| Date | Feedback ID | Trainer ID | Student Name | Feedback Comment | Rating |\n"
+                f"|---|---|---|---|---|---|\n"
+                f"{feedback_table if feedback_table else '| - | - | - | - | - | - |'}\n\n"
+                f"Instructions:\n"
+                f"1. If the user asks a question about the last 3 months, profile info, or general conversational questions, answer it directly from the context.\n"
+                f"2. Keep your answers concise, clear, and direct. Avoid flowery praise, moral support, or long-winded comments.\n"
+                f"3. If the user asks for historical data beyond 3 months (prior to {cutoff_date}) or requires aggregate SQL computations over the entire database tables, respond EXACTLY in this format:\n"
+                f"   NEED_SQL: <original question rewritten as a clean standalone database query>\n"
+                f"   Do not add any other text before or after this string."
+            )
+            
+        except Exception as e:
+            print(f"\033[91mError initializing Query Engine / Context: {e}\033[0m")
+            sys.exit(1)
+    else:
+        # Load Trainer data for context-based LLM chatbot
+        try:
+            with engine.connect() as conn:
+                trainer_data = conn.execute(text("SELECT name, department, attendance FROM v_trainers")).fetchone()
+                feedback_data = conn.execute(text("SELECT feedback_text, rating FROM v_feedback")).fetchall()
+            
+            if not trainer_data:
+                print("\033[91mError: Could not retrieve trainer profile details.\033[0m")
+                sys.exit(1)
+                
+            trainer_name, department, attendance = trainer_data
+            feedback_list = "\n".join([f"- Rating: {f[1]} | Comment: \"{f[0]}\"" for f in feedback_data])
+            
+            trainer_context = (
+                f"You are a helpful SQL database assistant for a trainer named {trainer_name} (Department: {department}, Attendance: {attendance}%).\n"
+                f"You have access to their profile and their feedback records (which are anonymized for student privacy):\n\n"
+                f"Trainer Profile:\n"
+                f"- Name: {trainer_name}\n"
+                f"- Department: {department}\n"
+                f"- Attendance: {attendance}%\n\n"
+                f"Feedback Received:\n"
+                f"{feedback_list if feedback_list else '- No feedback received yet.'}\n\n"
+                f"Your task is to answer user questions using this data. Answer general conversational questions (chitchat) and database-related queries directly, in a friendly and personalized manner.\n"
+                f"Always address the user directly as 'you' or '{trainer_name}' where appropriate (e.g. say 'Your average rating is...' or 'You received a feedback comment stating...').\n\n"
+                f"Critical Guidelines for Response Style:\n"
+                f"- Keep responses brief, direct, and focused on the database facts. Avoid unnecessary filler words.\n"
+                f"- DO NOT write excessive moral support, flowery praise, or long-winded encouragement (e.g., do NOT say things like 'It is completely normal to have constructive feedback' or 'every great educator uses those insights to refine their craft').\n"
+                f"- Keep expressions of praise simple (e.g., 'Good job' or 'You are on the right path') and immediately follow up with the requested data or specific feedback comments."
+            )
+        except Exception as e:
+            print(f"\033[91mError loading trainer data: {e}\033[0m")
+            sys.exit(1)
 
     chat_history = []
 
@@ -202,68 +267,67 @@ def main():
                 print("\033[96mGoodbye!\033[0m")
                 break
             
-            history_str = ""
-            for prev_q, prev_a in chat_history[-3:]:
-                history_str += f"User: {prev_q}\nAssistant: {prev_a}\n"
-            
-            classification_prompt = (
-                f"You are an assistant that classifies and rewrites user inputs based on conversation history.\n\n"
-                f"Your task is to:\n"
-                f"1. Classify the latest question as either 'DB_QUERY' (asks for data/ratings/trainers from a database) or 'CHITCHAT' (greetings, general chat, or off-topic).\n"
-                f"2. If it is a 'DB_QUERY', rewrite it to be a standalone, self-contained question resolving any pronouns (he, she, they, his, its) from context.\n"
-                f"   - Rule: If the user asks for 'another', 'other', 'else', or 'different' entity (e.g. 'another Akash' or 'anyone else'), "
-                f"rewrite the question to exclude the entities already discussed in the history (e.g. 'other than Akash L').\n"
-                f"   - Rule: DO NOT carry over unrelated attributes (like department or rating of previous entities) unless explicitly requested.\n\n"
-                f"Format your output exactly as a JSON object with two keys:\n"
-                f"{{\n"
-                f"  \"label\": \"DB_QUERY\" or \"CHITCHAT\",\n"
-                f"  \"rewritten_question\": \"standalone question here (or empty string for CHITCHAT)\"\n"
-                f"}}\n\n"
-                f"Conversation History:\n{history_str}\n"
-                f"Latest Question: {question}\n"
-                f"JSON Output:"
-            )
-            
-            route_res = safe_llm_complete(classification_prompt)
-            parsed_data = parse_json_response(route_res.text)
-            label = parsed_data.get("label", "DB_QUERY").upper()
-            processed_question = parsed_data.get("rewritten_question", question)
-            
-            if "CHITCHAT" in label:
-                chat_res = safe_llm_complete(
-                    f"You are a helpful SQL database assistant. Respond to the user's message conversationally. "
-                    f"Remind them that you can help them query trainer and feedback data in the database.\n\n"
-                    f"User: {processed_question}\n"
+            if role == "admin":
+                history_str = ""
+                for prev_q, prev_a in chat_history[-5:]:
+                    history_str += f"User: {prev_q}\nAssistant: {prev_a}\n"
+                
+                chat_prompt = (
+                    f"{admin_context}\n\n"
+                    f"Conversation History:\n{history_str}\n"
+                    f"User: {question}\n"
                     f"Assistant:"
                 )
-                response_text = chat_res.text
+                
+                res = safe_llm_complete(chat_prompt)
+                response_text = res.text.strip()
+                
+                if response_text.startswith("NEED_SQL:"):
+                    processed_question = response_text.replace("NEED_SQL:", "").strip()
+                    print("\033[90mProcessing database query...\033[0m")
+                    user_context = f"[Logged-in User context: Role={role}] "
+                    response = query_engine.query(user_context + processed_question)
+                    
+                    sql_query = response.metadata.get("sql_query")
+                    
+                    print("\n" + "="*50)
+                    if sql_query:
+                        print(f"\033[93mGenerated SQL Query:\033[0m\n{sql_query}")
+                        print("-"*50)
+                    else:
+                        print("\033[91mNo SQL query was generated.\033[0m")
+                        print("-"*50)
+                        
+                    print(f"\033[92mAnswer:\033[0m\n{response.response}")
+                    print("="*50 + "\n")
+                    chat_history.append((question, response.response))
+                else:
+                    print("\n" + "="*50)
+                    print(f"\033[92mAnswer:\033[0m\n{response_text}")
+                    print("="*50 + "\n")
+                    chat_history.append((question, response_text))
+            
+            else: # trainer role
+                print("\033[90mProcessing question...\033[0m")
+                history_str = ""
+                for prev_q, prev_a in chat_history[-5:]:
+                    history_str += f"User: {prev_q}\nAssistant: {prev_a}\n"
+                
+                chat_prompt = (
+                    f"{trainer_context}\n\n"
+                    f"Conversation History:\n{history_str}\n"
+                    f"User: {question}\n"
+                    f"Assistant:"
+                )
+                
+                res = safe_llm_complete(chat_prompt)
+                response_text = res.text
+                
                 print("\n" + "="*50)
                 print(f"\033[92mAnswer:\033[0m\n{response_text}")
                 print("="*50 + "\n")
                 chat_history.append((question, response_text))
-                continue
-            
-            print("\033[90mProcessing question...\033[0m")
-            user_context = f"[Logged-in User context: Role={role}"
-            if role == "trainer":
-                user_context += f", Name={matched_name}"
-            user_context += "] "
-            response = query_engine.query(user_context + processed_question)
-            
-            sql_query = response.metadata.get("sql_query")
-            
-            print("\n" + "="*50)
-            if sql_query:
-                print(f"\033[93mGenerated SQL Query:\033[0m\n{sql_query}")
-                print("-"*50)
-            else:
-                print("\033[91mNo SQL query was generated.\033[0m")
-                print("-"*50)
                 
-            print(f"\033[92mAnswer:\033[0m\n{response.response}")
-            print("="*50 + "\n")
-            chat_history.append((question, response.response))
-            
         except KeyboardInterrupt:
             print("\n\033[96mGoodbye!\033[0m")
             break
