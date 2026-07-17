@@ -118,7 +118,6 @@ cd SQL-RAG
 ### 2. Install Dependencies
 ```bash
 pip install -r requirements.txt
-pip install llama-index-llms-google-genai
 ```
 
 ### 3. Initialize the Database
