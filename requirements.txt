@@ -1,5 +1,5 @@
 llama-index
-llama-index-llms-gemini
+llama-index-llms-google-genai
 google-generativeai
 sqlalchemy
 python-dotenv
